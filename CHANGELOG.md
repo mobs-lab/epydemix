@@ -7,6 +7,67 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [1.3.2] - 2026-07-29
+
+### Changed
+
+* **Reproducible ABC-SMC calibration.** `ABCSampler` now accepts an `rng` argument (an `int` seed or `np.random.Generator`) that governs *all* calibration randomness — prior sampling, perturbation kernel proposals, and posterior resampling — not just the underlying simulation. Previously, only `simulate()`/`EpiModel.run_simulations()` accepted an `rng`; the ABC-SMC layer itself (`sample_prior`, `Perturbation.propose`, particle resampling in `_run_smc_generation` and `run_projections`) drew from the unseeded global `np.random` state, so two calibration runs with an identically-seeded simulation could still diverge. `Perturbation.propose()` (and its `DefaultPerturbationContinuous`/`DefaultPerturbationDiscrete` implementations) and `sample_prior()` now take an optional `rng` parameter accordingly; this is a signature change for any custom `Perturbation` subclass.
+* `ABCSampler.run_projections()` now accepts its own optional `rng` argument. Precedence for the seed source is: this call's `rng=`, then an `"rng"` key in `parameters`, then the sampler's own `rng` (so seeding the `ABCSampler` already makes its projections reproducible by default). Each of the `iterations` trajectories gets an independent child generator spawned (via `SeedSequence.spawn_key`) from that seed, so trajectories don't share a single advancing stream, and two `run_projections` calls given the same seed draw the same paired posterior samples.
+* `EpiModel.run_simulations()`, `simulate()`, `stochastic_simulation()`, and `multinomial()` now accept an integer seed directly for `rng` (in addition to an `np.random.Generator`), via `np.random.default_rng(rng)`.
+
+### Fixed
+
+* `run_projections` no longer breaks on NumPy < 1.25, where `BitGenerator.seed_seq` is not yet a public attribute; it now falls back to the private `_seed_seq` when the public accessor is unavailable.
+
+---
+
+## [1.3.1] - 2026-07-02
+
+### Fixed
+
+* `pyproject.toml` now lists `numba` as an optional extra (`pip install epydemix[numba]`), restoring the JIT-compiled speedup for `_multinomial_probs` (the hot path in stochastic simulation) advertised in the [1.2.0] changelog entry. `requirements.txt` and `setup.py` have listed `numba>=0.57.0` since 1.2.0, but `pyproject.toml`'s `dependencies` was never updated to match — since PyPI installs are driven by `pyproject.toml`, `pip install epydemix` never actually installed `numba`, silently falling back to the un-JIT'd Python path (no crash: `utils.py` already wraps the import in a `try/except` with a no-op decorator fallback). `numba`'s own hard dependency, `llvmlite`, bundles LLVM and is 40-60MB per wheel, so it's exposed as an opt-in extra rather than a base dependency.
+
+---
+
+## [1.3.0] - 2026-07-01
+
+### Changed
+
+* **Breaking:** `add_outcome` in `predefined_models.py` now interprets `mortality_rate` / `hospitalization_rate` as the *fraction* of the Infected outflow that goes to Dead / Hospitalized, rescaling the existing Infected outflow (e.g. `Infected → Recovered`) by `(1 - rate)`. Previously these were independent day⁻¹ rates competing with `recovery_rate` for the same Infected pool, which meant `hospitalization_rate=0.02` did not mean "2% of infections are hospitalized" — it meant an extra, independent hazard on top of recovery. This matches the branching-fraction convention already used by `asymptomatic_fraction` in `create_seiar`. Existing code passing `outcome=` will see a behavior change: pass the intended fraction (e.g. `0.02` for "2% hospitalized") rather than a standalone rate.
+
+### Fixed
+
+* `add_vaccination` in `predefined_models.py` now routes breakthrough infections (`Vaccinated → ...`) to **Exposed** when the backbone has an Exposed compartment (`SEIR`, `SEIAR`), instead of always jumping straight to `Infected`. Previously, vaccinated individuals who got infected on `SEIR`/`SEIAR` backbones skipped the incubation stage entirely; they now correctly re-enter `Exposed` and progress through incubation like any other infection. Behavior for `SIR`/`SIS` (`Vaccinated → Infected`) is unchanged.
+* `apply_initial_conditions` in `utils.py` now raises a `ValueError` (surfaced as `RuntimeError: Simulation failed: ...` from `run_simulations`) when `initial_conditions_dict` contains a compartment name not present in the model, instead of silently ignoring the mismatched key and leaving the intended compartment at 0 population for the whole simulation. Fixes [#20](https://github.com/epistorm/epydemix/issues/20).
+* `stochastic_simulation` in `epimodel.py` no longer double-counts recorded transition counts when a model has two or more `Transition` objects sharing the same `(source, target)` pair (e.g. `SEIAR`'s `Susceptible → Exposed`, defined once mediated by `Infected` and once by `Asymptomatic`). The underlying rate accumulation and population updates were always correct; only the `transitions_evolution` bookkeeping loop was re-adding the same combined flow once per contributing `Transition` object. This affects `SEIAR`'s recorded `Susceptible_to_Exposed` trajectory (previously ~2x the true flow) and any user-defined model with a duplicate `(source, target)` transition pair; compartment populations (`compartments_evolution`) were never affected.
+* Fixed a flaky `test_calibration` (`test_tutorial4.py`) that could occasionally fail with `ValueError: pvals < 0, pvals > 1 or pvals contains NaNs`, caused by the unseeded `mock_population` fixture being able to sample a zero-population age group and dividing by zero in the force-of-infection computation. The fixture now samples population sizes from 1 upward instead of 0.
+
+---
+
+## [1.2.1] - 2026-05-15
+
+### Added
+
+* New `SEIAR` backbone model in `load_predefined_model`: adds an **Asymptomatic** infectious compartment branching from Exposed. New parameters: `asymptomatic_fraction`, `asymptomatic_recovery_rate`, `asymptomatic_relative_infectivity`.
+* Three orthogonal modular extensions that can be composed on top of any backbone via keyword arguments to `load_predefined_model`:
+  * `waning_immunity=True` — adds an **R → S** spontaneous transition (`waning_rate`, default `1/365`). Not compatible with `SIS`.
+  * `vaccination=True` — adds a **Vaccinated** compartment with `S → Vaccinated` (rate `vaccination_rate`) and `Vaccinated → Infected` at reduced rate `transmission_rate * (1 - vaccine_efficacy)`.
+  * `outcome="deaths"` — adds a **Dead** compartment with an `Infected → Dead` spontaneous transition (`mortality_rate`).
+  * `outcome="hospitalization"` — adds a **Hospitalized** compartment with `Infected → Hospitalized` (`hospitalization_rate`) and `Hospitalized → Recovered` (`hospitalization_recovery_rate`). Not compatible with `SIS`.
+* `SUPPORTED_MODELS` updated to `["SIR", "SEIR", "SIS", "SEIAR"]`.
+* All new rate parameters accept scalars, 1D time-varying arrays of shape `(T,)`, or 2D age-stratified arrays of shape `(T, G)`, consistent with the existing parameter system.
+* Tests for all new backbones and modules in `tests/test_predefined_models.py`, bringing `predefined_models.py` to 100% coverage.
+
+### Fixed
+
+* `create_default_initial_conditions` in `epimodel.py` now correctly handles models with duplicate mediated-transition sources (e.g. SEIAR, where `S` appears twice) and models where module compartments like `Vaccinated` or `Exposed` are transition targets. The method now uses a three-level strategy: (1) seed residual population into sources with no inflow at all; (2) if all sources have inflow (e.g. SIRS where waning makes `S` a target), fall back to the source with the most outgoing mediated transitions, preferring non-mediated-targets. This ensures `Susceptible` always receives the bulk of the population and accumulator compartments (`Vaccinated`, `Exposed`, `Hospitalized`, `Dead`) always start at zero when no explicit initial conditions are provided.
+
+### Tutorials
+
+* Added Tutorial 12: Predefined Epidemic Models — demonstrates all four backbone models and the three modular extensions (waning immunity, vaccination, outcome tracking), with side-by-side comparisons and an example of time-varying parameter overrides post-construction.
+
+---
+
 ## [1.2.0] - 2026-05-12
 
 ### Added
