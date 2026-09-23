@@ -350,17 +350,26 @@ def apply_initial_conditions(epimodel, initial_conditions_dict) -> np.ndarray:
         np.ndarray: A 2D array where rows correspond to compartments and columns correspond to demographic groups,
                     representing the initial conditions of the model. The shape of the array is
                     `(number_of_compartments, number_of_demographic_groups)`.
+
+    Raises:
+        ValueError: If initial_conditions_dict contains keys that are not compartments of the model.
     """
+    unknown_compartments = set(initial_conditions_dict) - set(epimodel.compartments)
+    if unknown_compartments:
+        raise ValueError(
+            f"initial_conditions_dict contains compartment(s) not present in the model: "
+            f"{sorted(unknown_compartments)}. Model compartments are: {epimodel.compartments}."
+        )
+
     # initialize population in different compartments and demographic groups
     initial_conditions = np.zeros(
         (len(epimodel.compartments), len(epimodel.population.Nk)), dtype="int"
     )
     for comp in epimodel.compartments:
         if comp in initial_conditions_dict:
-            if comp in epimodel.compartments:
-                initial_conditions[epimodel.compartments_idx[comp]] = (
-                    initial_conditions_dict[comp]
-                )
+            initial_conditions[epimodel.compartments_idx[comp]] = (
+                initial_conditions_dict[comp]
+            )
 
     return initial_conditions
 
@@ -475,13 +484,13 @@ def multinomial(
         mask (np.ndarray): boolean array selecting the 'leave' destinations
         dt (float): time step size
         apply_linear_approximation (bool): whether to apply a linear approximation to the probabilities
-        rng (np.random.Generator): random number generator
+        rng (int, np.random.Generator, or None): seed or random number generator
         probs_out (np.ndarray): unused, kept for API compatibility
 
     Returns:
         np.ndarray: array of multinomial samples
     """
-    rng = np.random.default_rng() if rng is None else rng
+    rng = np.random.default_rng(rng)
     probs = _multinomial_probs(n, rates, stay_idx, mask, dt, apply_linear_approximation)
     if n <= 0:
         out = np.zeros(len(rates), dtype=int)

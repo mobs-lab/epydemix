@@ -23,6 +23,9 @@ You can install **epydemix** from either **PyPI** or **conda-forge**. We recomme
 ```bash
 pip install epydemix
 ```
+
+Add `pip install epydemix[numba]` for a JIT-compiled speedup on the stochastic simulation hot path (optional — epydemix runs fine without it, just slower).
+
 ### Install from Conda (conda-forge)
 
 ```bash
@@ -83,6 +86,7 @@ We provide a series of tutorials to help you get started with **epydemix**.
 - [Tutorial 9](https://github.com/epistorm/epydemix/blob/main/tutorials/09_Vaccinations.ipynb): Modeling Vaccinations
 - [Tutorial 10](https://github.com/epistorm/epydemix/blob/main/tutorials/10_Multiprocessing.ipynb): Speeding up Simulations and Calibration with Multiprocessing
 - [Tutorial 11](https://github.com/epistorm/epydemix/blob/main/tutorials/11_Epistorm_Mix_Matrices.ipynb): Using Epistorm-Mix Contact Matrices (sex and race/ethnicity)
+- [Tutorial 12](https://github.com/epistorm/epydemix/blob/main/tutorials/12_Predefined_Models.ipynb): Predefined Epidemic Models — Backbones and Modular Extensions
 
 You can run all tutorials directly in Google Colab — just open any notebook in the [tutorials](./tutorials) folder and click the **“Open in Colab”** button at the top.
 
@@ -112,6 +116,11 @@ model.set_population(population)
 Epydemix can load data either locally from a folder or directly from online sources, making it easy to simulate a wide range of epidemic models on real population data.
 
 For more information about the available population and contact matrices and to download the data, please visit the [dedicated repository](https://github.com/epistorm/epydemix-data/).
+
+---
+## Agent Framework
+
+Epydemix also ships a CLI for driving simulations programmatically — designed for use by LLM agents and automation pipelines, but equally usable from the shell. It covers discovery, config validation, running, and inspecting results end-to-end. See [AGENT.md](https://github.com/epistorm/epydemix/blob/agent-framework/AGENT.md) on the `agent-framework` branch for the full contract and worked examples.
 
 ---
 ## Citation 

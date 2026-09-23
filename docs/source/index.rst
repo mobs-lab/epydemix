@@ -56,6 +56,8 @@ To install Epydemix, use the following command:
 
    pip install epydemix
 
+Add ``pip install epydemix[numba]`` for a JIT-compiled speedup on the stochastic simulation hot path (optional — epydemix runs fine without it, just slower).
+
 Get started
 ----------
 
@@ -72,6 +74,7 @@ We provide a series of tutorials to help you get started with Epydemix:
 - `Tutorial 9: Modeling Vaccinations <https://github.com/epistorm/epydemix/blob/main/tutorials/09_Vaccinations.ipynb>`_
 - `Tutorial 10: Speeding up Simulations and Calibration with Multiprocessing <https://github.com/epistorm/epydemix/blob/main/tutorials/10_Multiprocessing.ipynb>`_
 - `Tutorial 11: Using Epistorm-Mix Contact Matrices (sex and race/ethnicity) <https://github.com/epistorm/epydemix/blob/main/tutorials/11_Epistorm_Mix_Matrices.ipynb>`_
+- `Tutorial 12: Predefined Epidemic Models — Backbones and Modular Extensions <https://github.com/epistorm/epydemix/blob/main/tutorials/12_Predefined_Models.ipynb>`_
 
 .. toctree::
    :maxdepth: 3

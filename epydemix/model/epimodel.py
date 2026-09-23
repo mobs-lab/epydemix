@@ -661,15 +661,47 @@ class EpiModel:
         # Total population for each age group
         total_population_per_age_group = np.array(population)
 
-        # Get compartments that are agents in transitions
-        agent_compartments = [
-            tr.params[1] for tr in self.transitions_list if tr.kind == "mediated"
-        ]
+        # Unique agent compartments (preserving first-seen order)
+        agent_compartments = list(
+            dict.fromkeys(
+                tr.params[1] for tr in self.transitions_list if tr.kind == "mediated"
+            )
+        )
 
-        # Get compartments that are sources in transitions with agents
-        source_compartments = [
-            tr.source for tr in self.transitions_list if tr.kind == "mediated"
-        ]
+        # Unique source compartments that have no inflow — i.e. true "entry point"
+        # compartments. Excluding targets prevents modules like Vaccination or SEIAR
+        # from splitting the initial population into compartments that should start empty.
+        all_targets = {tr.target for tr in self.transitions_list}
+        mediated_targets = {
+            tr.target for tr in self.transitions_list if tr.kind == "mediated"
+        }
+        source_compartments = list(
+            dict.fromkeys(
+                tr.source
+                for tr in self.transitions_list
+                if tr.kind == "mediated" and tr.source not in all_targets
+            )
+        )
+        # Fallback for models where every mediated source also has inflow (e.g. SIRS,
+        # where R→S makes Susceptible a target of a spontaneous transition).
+        # Use the mediated source with the most outgoing mediated transitions, breaking
+        # ties by preferring compartments that are not targets of mediated transitions.
+        # This reliably selects Susceptible as the residual population holder.
+        if not source_compartments:
+            from collections import Counter
+
+            mediated_source_counts = Counter(
+                tr.source for tr in self.transitions_list if tr.kind == "mediated"
+            )
+            max_count = max(mediated_source_counts.values())
+            candidates = [
+                c for c, n in mediated_source_counts.items() if n == max_count
+            ]
+            # Prefer candidates not targeted by mediated transitions
+            non_mediated_targets = [c for c in candidates if c not in mediated_targets]
+            source_compartments = (
+                non_mediated_targets if non_mediated_targets else candidates
+            )
 
         # Total number of agent compartments
         num_agent_compartments = len(agent_compartments)
@@ -738,7 +770,7 @@ class EpiModel:
         resample_aggregation_transitions: Optional[Union[str, dict]] = "sum",
         fill_method: Optional[str] = "ffill",
         apply_linear_approximation: bool = False,
-        rng: Optional[np.random.Generator] = None,
+        rng: Optional[Union[int, np.random.Generator]] = None,
     ) -> SimulationResults:
         """
         Simulates the epidemic model multiple times over the given time period.
@@ -755,7 +787,7 @@ class EpiModel:
             resample_aggregation_transitions (str, optional): The aggregation method to use when resampling the transitions. Default is "sum".
             fill_method (str, optional): Method to fill NaN values after resampling. Default is "ffill".
             apply_linear_approximation (bool, optional): Whether to use linear approximation to the probabilities. Default is False.
-            rng (np.random.Generator, optional): Random number generator. Default is None.
+            rng (int or np.random.Generator, optional): Seed or random number generator. Default is None.
 
         Returns:
             SimulationResults: An object containing all simulation trajectories.
@@ -764,8 +796,7 @@ class EpiModel:
             RuntimeError: If the simulation fails.
         """
 
-        if rng is None:
-            rng = np.random.default_rng()
+        rng = np.random.default_rng(rng)
 
         # Run multiple simulations and collect trajectories
         try:
@@ -816,7 +847,7 @@ def simulate(
     resample_aggregation_transitions: Optional[Union[str, dict]] = "sum",
     fill_method: Optional[str] = "ffill",
     apply_linear_approximation: bool = False,
-    rng: Optional[np.random.Generator] = None,
+    rng: Optional[Union[int, np.random.Generator]] = None,
     contact_matrices: Optional[List[Dict[str, np.ndarray]]] = None,
     simulation_dates: Optional[List[pd.Timestamp]] = None,
     **kwargs,
@@ -836,7 +867,7 @@ def simulate(
         resample_aggregation_transitions (str, optional): The aggregation method to use when resampling the transitions. Default is "sum".
         fill_method (str, optional): The method to use when filling NaN values after resampling. Default is "ffill".
         apply_linear_approximation (bool, optional): Whether to use linear approximation to the probabilities. Default is False.
-        rng (np.random.Generator, optional): Random number generator. Default is None.
+        rng (int or np.random.Generator, optional): Seed or random number generator. Default is None.
         contact_matrices (list, optional): A list of contact matrices for the simulation. Default is None.
         simulation_dates (list, optional): A list of simulation dates. Default is None.
         **kwargs: Additional parameters to overwrite model parameters during the simulation.
@@ -847,8 +878,7 @@ def simulate(
     Raises:
         ValueError: If the model has no transitions defined.
     """
-    if rng is None:
-        rng = np.random.default_rng()
+    rng = np.random.default_rng(rng)
 
     # check that the model has transitions
     if len(epimodel.transitions_list) == 0:
@@ -937,7 +967,7 @@ def stochastic_simulation(
     initial_conditions: np.ndarray,
     dt: float,
     apply_linear_approximation: bool = False,
-    rng: Optional[np.random.Generator] = None,
+    rng: Optional[Union[int, np.random.Generator]] = None,
 ) -> np.ndarray:
     """
     Run a stochastic simulation of the epidemic model.
@@ -950,10 +980,9 @@ def stochastic_simulation(
         initial_conditions: Initial population distribution
         dt: Time step size
         apply_linear_approximation (bool, optional): Whether to use linear approximation to the probabilities. Default is False.
-        rng (np.random.Generator, optional): Random number generator. Default is None.
+        rng (int or np.random.Generator, optional): Seed or random number generator. Default is None.
     """
-    if rng is None:
-        rng = np.random.default_rng()
+    rng = np.random.default_rng(rng)
 
     # Pre-allocate arrays
     N = len(epimodel.population.Nk)
@@ -1034,10 +1063,15 @@ def stochastic_simulation(
                 ]
             )
 
-            # Store transition counts
+            # Store transition counts (dedupe transitions sharing the same (source, target)
+            # pair, since their rates were already merged into a single delta before the draw)
+            seen_tr_idx = set()
             for tr in transitions:
                 tr_name = f"{tr.source}_to_{tr.target}"
                 tr_idx = epimodel.transitions_idx[tr_name]
+                if tr_idx in seen_tr_idx:
+                    continue
+                seen_tr_idx.add(tr_idx)
                 transitions_evolution[t, tr_idx] += delta[
                     :, epimodel.compartments_idx[tr.target]
                 ]
